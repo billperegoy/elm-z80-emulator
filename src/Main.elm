@@ -17,6 +17,8 @@ main =
 
 type alias Model =
     { pc : Int
+    , addrReg : Int
+    , instrReg : Instruction
     , ram : Array.Array Instruction
     , clkCycle : Int
     , tCycle : TCycle
@@ -50,11 +52,13 @@ type MCycle
 
 type Instruction
     = NOP
+    | ILLEGAL
     | HALT
     | LD Register Register
-    | LDI Register Int
+    | LDI Register
     | ADD Register
-    | JRZ Int
+    | JRNZ
+    | DATA Int
 
 
 type alias RegisterValues =
@@ -71,6 +75,8 @@ type alias RegisterValues =
 init : Model
 init =
     { pc = 0
+    , addrReg = 0
+    , instrReg = NOP
     , ram = initRam
     , clkCycle = 0
     , tCycle = T1
@@ -82,30 +88,70 @@ init =
 initRam : Array.Array Instruction
 initRam =
     Array.fromList
-        [ LDI A 10
-        , LDI B -1
+        [ LDI A
+        , DATA 10
+        , LDI B
+        , DATA -1
         , ADD B
-        , JRZ -1
+        , JRNZ
+        , DATA -1
         , HALT
         ]
 
 
 type Msg
-    = NoOp
-    | Tick Time.Time
+    = Tick Time.Time
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
-        NoOp ->
-            model ! []
-
         Tick _ ->
             { model
                 | clkCycle = model.clkCycle + 1
                 , tCycle = changeTCycleState model.tCycle
-                , mCycle = changeMCycleState model.tCycle model.mCycle
+                , mCycle = changeMCycleState model.tCycle model.mCycle model.instrReg
+                , pc =
+                    case ( model.mCycle, model.tCycle ) of
+                        ( M1, T2 ) ->
+                            model.pc + 1
+
+                        _ ->
+                            model.pc
+                , addrReg =
+                    case ( model.mCycle, model.tCycle ) of
+                        ( M1, T1 ) ->
+                            model.pc
+
+                        -- This is the case of instructions which are 2 bytes
+                        ( M2, T1 ) ->
+                            case model.instrReg of
+                                LDI _ ->
+                                    model.pc
+
+                                _ ->
+                                    model.addrReg
+
+                        _ ->
+                            model.addrReg
+                , instrReg =
+                    case ( model.mCycle, model.tCycle ) of
+                        ( M1, T2 ) ->
+                            Array.get model.addrReg model.ram
+                                |> Maybe.withDefault ILLEGAL
+
+                        _ ->
+                            model.instrReg
+                , registers =
+                    case ( model.mCycle, model.tCycle ) of
+                        -- This is the cycle where we can execute immediate instructions
+                        -- But I have a problem. I don't have rhe actual instruction opcode
+                        -- saved. I only have the fetched immediate data.
+                        ( M2, T3 ) ->
+                            model.registers
+
+                        _ ->
+                            model.registers
             }
                 ! []
 
@@ -126,8 +172,8 @@ changeTCycleState tCycle =
             T1
 
 
-changeMCycleState : TCycle -> MCycle -> MCycle
-changeMCycleState tCycle mCycle =
+changeMCycleState : TCycle -> MCycle -> Instruction -> MCycle
+changeMCycleState tCycle mCycle instruction =
     case tCycle of
         T4 ->
             case mCycle of
@@ -135,7 +181,10 @@ changeMCycleState tCycle mCycle =
                     M2
 
                 M2 ->
-                    M3
+                    if twoCycleInstruction instruction then
+                        M1
+                    else
+                        M3
 
                 M3 ->
                     M1
@@ -144,14 +193,34 @@ changeMCycleState tCycle mCycle =
             mCycle
 
 
+twoCycleInstruction : Instruction -> Bool
+twoCycleInstruction instruction =
+    case instruction of
+        LDI _ ->
+            True
+
+        _ ->
+            False
+
+
 view : Model -> Html Msg
 view model =
     div []
         [ h1 []
             [ text "Z80 Emulator" ]
-        , p [] [ text ("PC: " ++ (toString <| model.clkCycle)) ]
+        , p [] [ text ("Cycle: " ++ (toString <| model.clkCycle)) ]
         , p [] [ text ("MCycle: " ++ (toString <| model.mCycle)) ]
         , p [] [ text ("TCycle: " ++ (toString <| model.tCycle)) ]
+        , p [] [ text ("PC: " ++ (toString <| model.pc)) ]
+        , p [] [ text ("Address: " ++ (toString <| model.addrReg)) ]
+        , p [] [ text ("Instruction: " ++ (toString <| model.instrReg)) ]
+        , p [] [ text ("A: " ++ (toString <| model.registers.a)) ]
+        , p [] [ text ("B: " ++ (toString <| model.registers.b)) ]
+        , p [] [ text ("C: " ++ (toString <| model.registers.c)) ]
+        , p [] [ text ("D: " ++ (toString <| model.registers.d)) ]
+        , p [] [ text ("E: " ++ (toString <| model.registers.e)) ]
+        , p [] [ text ("H: " ++ (toString <| model.registers.h)) ]
+        , p [] [ text ("L: " ++ (toString <| model.registers.l)) ]
         ]
 
 
